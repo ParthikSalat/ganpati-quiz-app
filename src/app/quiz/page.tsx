@@ -8,14 +8,13 @@ import {
     useEventListener,
     ClientSideSuspense,
 } from "@liveblocks/react";
+import { JsonObject } from "@liveblocks/client";
 
 interface Question {
     id: string;
     questionText: string;
     options: string[];
     correctAnswer: string;
-    questionNumber: number;   // ✅ added
-    totalQuestions: number;   // ✅ added
 }
 
 interface LeaderboardItem {
@@ -30,6 +29,7 @@ function QuizContent() {
     const [participantId, setParticipantId] = useState<string | null>(null);
     const [participantName, setParticipantName] = useState<string | null>(null);
     const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+    const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [timer, setTimer] = useState(15);
@@ -48,7 +48,15 @@ function QuizContent() {
                 throw new Error("Failed to fetch question");
             }
             const data = await response.json();
-            setCurrentQuestion(data);
+
+            if ("message" in data) {
+                setCurrentQuestion(null);
+                setError(data.message);
+            } else {
+                setCurrentQuestion(data.question);
+                setCurrentQuestionIndex(data.index);
+                setError(null);
+            }
         } catch (err) {
             setError("Could not load quiz questions. Please try again.");
             console.error(err);
@@ -93,20 +101,23 @@ function QuizContent() {
         }
     }, [timer, answerSubmitted]);
 
+    // ✅ FIX: Properly typed event listener
     useEventListener(({ event }) => {
         if (!event) return;
 
-        if (event.type === "score_update") {
+        const e = event as JsonObject & { type?: string };
+
+        if (e.type === "score_update") {
             updateLeaderboard();
         }
-        if (event.type === "next_question_event") {
+        if (e.type === "next_question_event") {
             fetchQuestion();
         }
-        if (event.type === "quiz_restarted") {
-            fetchQuestion(); // reload from Q1
+        if (e.type === "quiz_restarted") {
+            fetchQuestion(); // reset to first question
+            updateLeaderboard();
         }
     });
-
 
     const handleSubmitAnswer = async (submittedAnswer: string) => {
         if (!participantId || !currentQuestion || answerSubmitted) return;
@@ -161,7 +172,7 @@ function QuizContent() {
         );
     }
 
-    if (!currentQuestion || "message" in currentQuestion) {
+    if (!currentQuestion) {
         return (
             <div className="flex items-center justify-center min-h-screen bg-gray-100">
                 <p className="text-xl font-medium text-gray-700">
@@ -180,8 +191,7 @@ function QuizContent() {
                             Hello, {participantName}!
                         </h2>
                         <span className="text-lg font-semibold text-orange-600">
-                            Question {currentQuestion.questionNumber} /{" "}
-                            {currentQuestion.totalQuestions}
+                            Question {currentQuestionIndex + 1}
                         </span>
                     </div>
                     <div className="relative p-6 rounded-lg bg-gray-50 border-gray-200 border-2">
