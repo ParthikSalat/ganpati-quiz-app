@@ -188,7 +188,7 @@ function QuizContent() {
                 <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-2xl mx-auto">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl font-extrabold text-gray-800">
-                            Hello, {participantName}!
+                            Hello participent:, {participantName}!
                         </h2>
                         <span className="text-lg font-semibold text-orange-600">
                             Question {currentQuestionIndex + 1}
