@@ -35,27 +35,31 @@ function QuizContent() {
     const [timer, setTimer] = useState(15);
     const [answerSubmitted, setAnswerSubmitted] = useState(false);
     const [leaderboard, setLeaderboard] = useState<LeaderboardItem[]>([]);
+    const [quizStarted, setQuizStarted] = useState(false);
+
     const router = useRouter();
 
-    const fetchQuestion = useCallback(async () => {
+    // Fetch question for participant
+    const fetchQuestion = useCallback(async (pid: string) => {
         setLoading(true);
         setAnswerSubmitted(false);
         setTimer(15);
 
         try {
-            const response = await fetch("/api/questions");
-            if (!response.ok) {
-                throw new Error("Failed to fetch question");
-            }
+            const response = await fetch(`/api/questions?participantId=${pid}`);
             const data = await response.json();
 
             if ("message" in data) {
                 setCurrentQuestion(null);
                 setError(data.message);
+                if (data.message === "Quiz has not started yet. Please wait for the admin.") {
+                    setQuizStarted(false);
+                }
             } else {
                 setCurrentQuestion(data.question);
                 setCurrentQuestionIndex(data.index);
                 setError(null);
+                setQuizStarted(true);
             }
         } catch (err) {
             setError("Could not load quiz questions. Please try again.");
@@ -65,12 +69,11 @@ function QuizContent() {
         }
     }, []);
 
+    // Fetch leaderboard
     const updateLeaderboard = useCallback(async () => {
         try {
             const response = await fetch("/api/leaderboard");
-            if (!response.ok) {
-                throw new Error("Failed to fetch leaderboard");
-            }
+            if (!response.ok) throw new Error("Failed to fetch leaderboard");
             const data: LeaderboardItem[] = await response.json();
             setLeaderboard(data);
         } catch (err) {
@@ -78,6 +81,7 @@ function QuizContent() {
         }
     }, []);
 
+    // Load participant info from localStorage
     useEffect(() => {
         const id = localStorage.getItem("participantId");
         const name = localStorage.getItem("participantName");
@@ -87,38 +91,31 @@ function QuizContent() {
         } else {
             setParticipantId(id);
             setParticipantName(name);
-            fetchQuestion();
+            fetchQuestion(id);
             updateLeaderboard();
         }
     }, [router, fetchQuestion, updateLeaderboard]);
 
+    // Timer countdown
     useEffect(() => {
         if (timer > 0 && !answerSubmitted) {
-            const countdown = setInterval(() => {
-                setTimer((prev) => prev - 1);
-            }, 1000);
+            const countdown = setInterval(() => setTimer(prev => prev - 1), 1000);
             return () => clearInterval(countdown);
         }
     }, [timer, answerSubmitted]);
 
-    // ✅ FIX: Properly typed event listener
+    // Liveblocks event listener
     useEventListener(({ event }) => {
         if (!event) return;
 
         const e = event as JsonObject & { type?: string };
 
-        if (e.type === "score_update") {
-            updateLeaderboard();
-        }
-        if (e.type === "next_question_event") {
-            fetchQuestion();
-        }
-        if (e.type === "quiz_restarted") {
-            fetchQuestion(); // reset to first question
-            updateLeaderboard();
-        }
+        if (e.type === "score_update") updateLeaderboard();
+        if (e.type === "next_question_event" && participantId) fetchQuestion(participantId);
+        if (e.type === "quiz_started" && participantId) fetchQuestion(participantId);
     });
 
+    // Submit answer
     const handleSubmitAnswer = async (submittedAnswer: string) => {
         if (!participantId || !currentQuestion || answerSubmitted) return;
 
@@ -127,9 +124,7 @@ function QuizContent() {
         try {
             const response = await fetch("/api/submit-answer", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     participantId,
                     questionId: currentQuestion.id,
@@ -137,9 +132,8 @@ function QuizContent() {
                 }),
             });
 
-            if (!response.ok) {
-                throw new Error("Failed to submit answer");
-            }
+            if (!response.ok) throw new Error("Failed to submit answer");
+
         } catch (err) {
             setError("Failed to submit answer. Please try again.");
             console.error(err);
@@ -147,14 +141,23 @@ function QuizContent() {
     };
 
     const getButtonClass = (option: string) => {
-        if (!answerSubmitted) {
+        if (!answerSubmitted)
             return "w-full text-left py-3 px-6 rounded-lg text-lg bg-gray-200 text-gray-800 hover:bg-orange-200 transition-colors duration-200";
-        }
-        if (option === currentQuestion?.correctAnswer) {
+        if (option === currentQuestion?.correctAnswer)
             return "w-full text-left py-3 px-6 rounded-lg text-lg bg-green-500 text-white transition-colors duration-200";
-        }
         return "w-full text-left py-3 px-6 rounded-lg text-lg bg-red-500 text-white transition-colors duration-200 opacity-50";
     };
+
+    // Waiting screen if quiz not started
+    if (!quizStarted) {
+        return (
+            <div className="flex items-center justify-center min-h-screen bg-yellow-100">
+                <p className="text-xl font-medium text-yellow-700 text-center">
+                    Quiz has not started yet. Please wait for the admin to start the quiz.
+                </p>
+            </div>
+        );
+    }
 
     if (loading) {
         return (
@@ -164,7 +167,7 @@ function QuizContent() {
         );
     }
 
-    if (error) {
+    if (error && error !== "Quiz has not started yet. Please wait for the admin.") {
         return (
             <div className="flex items-center justify-center min-h-screen bg-red-100">
                 <p className="text-xl font-medium text-red-700">{error}</p>
@@ -188,7 +191,7 @@ function QuizContent() {
                 <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-2xl mx-auto">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-2xl font-extrabold text-gray-800">
-                            Hello participent:, {participantName}!
+                            Hello participant: {participantName}!
                         </h2>
                         <span className="text-lg font-semibold text-orange-600">
                             Question {currentQuestionIndex + 1}
@@ -216,6 +219,7 @@ function QuizContent() {
                     </div>
                 </div>
             </div>
+
             <div className="w-1/4 bg-white p-6 rounded-xl shadow-2xl ml-8">
                 <h3 className="text-2xl font-extrabold text-gray-800 mb-4 text-center">
                     Leaderboard

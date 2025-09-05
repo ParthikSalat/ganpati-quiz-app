@@ -1,86 +1,69 @@
-import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { kv } from "@vercel/kv";
-import { Liveblocks } from "@liveblocks/node";
+// ganpati-quiz-app/app/api/submit-answer/route.ts
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-const liveblocks = new Liveblocks({
-    secret: process.env.LIVEBLOCKS_SECRET_KEY as string,
-});
-
-interface SubmitAnswerRequest {
-    participantId: string;
-    questionId: string;
-    submittedAnswer: string;
-}
-
-export async function POST(req: Request) {
-    const { participantId, questionId, submittedAnswer } =
-        (await req.json()) as SubmitAnswerRequest;
-
-    if (!participantId || !questionId || !submittedAnswer) {
-        return NextResponse.json({ message: "Missing fields" }, { status: 400 });
-    }
-
+export async function POST(request: Request) {
     try {
-        const question = await prisma.question.findUnique({
-            where: { id: questionId },
-        });
+        const { participantId, questionId, selectedAnswer } = await request.json();
 
-        if (!question) {
-            return NextResponse.json({ message: "Question not found" }, { status: 404 });
+        if (!participantId || !questionId || !selectedAnswer) {
+            return NextResponse.json(
+                { message: 'Participant ID, Question ID, and selected answer are required.' },
+                { status: 400 }
+            );
         }
 
-        let scoreIncrease = 0;
-        let correct = false;
+        const quizState = await prisma.quizState.findFirst();
+        if (!quizState || quizState.currentQuestionId !== questionId) {
+            return NextResponse.json({ message: 'Quiz is not on this question.' }, { status: 400 });
+        }
 
-        if (submittedAnswer === question.correctAnswer) {
-            correct = true;
-            scoreIncrease = question.points;
+        const question = await prisma.question.findUnique({ where: { id: questionId } });
+        if (!question) return NextResponse.json({ message: 'Question not found.' }, { status: 404 });
 
-            // Bonus for fastest
-            const fastestAnswerKey = `fastest_answer:${questionId}`;
-            const isFastest = !(await kv.exists(fastestAnswerKey));
+        const participant = await prisma.participant.findUnique({ where: { id: participantId } });
+        if (!participant) return NextResponse.json({ message: 'Participant not found.' }, { status: 404 });
 
-            if (isFastest) {
-                await kv.set(fastestAnswerKey, participantId);
-                scoreIncrease += 5;
+        let message = 'Incorrect answer.';
+        if (selectedAnswer === question.correctAnswer) {
+            let pointsAwarded = question.points;
+            let bonusMessage = '';
+
+            if (!quizState.answerReceived && quizState.questionStartTime) {
+                const timeTakenSeconds = (new Date().getTime() - quizState.questionStartTime.getTime()) / 1000;
+
+                if (timeTakenSeconds <= 5) {
+                    pointsAwarded += 20;
+                    bonusMessage = '🥇 Fastest correct answer! (+20 bonus points)';
+                } else if (timeTakenSeconds <= 10) {
+                    pointsAwarded += 10;
+                    bonusMessage = '🥈 Correct answer! (+10 bonus points)';
+                } else {
+                    bonusMessage = 'Correct answer!';
+                }
+
+                await prisma.quizState.update({
+                    where: { id: quizState.id },
+                    data: { answerReceived: true },
+                });
+            } else {
+                bonusMessage = 'Correct answer!';
             }
 
-            const updatedParticipant = await prisma.participant.update({
+            // Update participant score
+            await prisma.participant.update({
                 where: { id: participantId },
-                data: { score: { increment: scoreIncrease } },
+                data: { score: participant.score + pointsAwarded },
             });
 
-            // ✅ Broadcast score update
-            await liveblocks.broadcastEvent("ganpati-quiz-room", {
-                type: "score_update",
-                payload: {
-                    id: updatedParticipant.id,
-                    name: updatedParticipant.name,
-                    score: updatedParticipant.score,
-                },
-            });
+            message = bonusMessage;
         }
 
-        // ✅ Auto-advance to next question after 3 seconds
-        setTimeout(async () => {
-            const currentIndex = (await kv.get<number>("current_question_index")) ?? 0;
-            await kv.set("current_question_index", currentIndex + 1);
-
-            await liveblocks.broadcastEvent("ganpati-quiz-room", {
-                type: "next_question_event",
-            });
-        }, 3000);
-
-        return NextResponse.json({
-            correct,
-            message: correct ? "Correct answer!" : "Incorrect answer.",
-            scoreIncrease: correct ? scoreIncrease : 0,
-        });
+        return NextResponse.json({ message });
     } catch (error) {
-        console.error("Error submitting answer:", error);
-        return NextResponse.json({ message: "Internal Server Error" }, { status: 500 });
+        console.error('Error submitting answer:', error);
+        return NextResponse.json({ message: '❌ Failed to submit answer.' }, { status: 500 });
     }
 }

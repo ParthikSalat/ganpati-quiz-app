@@ -1,47 +1,41 @@
-import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-import { kv } from "@vercel/kv";
+// ganpati-quiz-app/app/api/add-question/route.ts
+import { NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export async function GET() {
+export async function POST(request: Request) {
     try {
-        const currentQuestionIndex =
-            (await kv.get<number>("current_question_index")) ?? 0;
+        const { questionText, options, correctAnswer, points } = await request.json();
 
-        const totalQuestions = await prisma.question.count();
-
-        // ❌ Block late joiners if quiz already started
-        if (currentQuestionIndex >= totalQuestions) {
-            return NextResponse.json({ message: "Quiz is over!" }, { status: 200 });
-        }
-
-        // ✅ Fetch current question
-        const question = await prisma.question.findFirst({
-            skip: currentQuestionIndex,
-            take: 1,
-            orderBy: { createdAt: "asc" },
-        });
-
-        if (!question) {
+        // Basic validation
+        if (!questionText || !options || !correctAnswer) {
             return NextResponse.json(
-                { message: "No question found" },
-                { status: 404 }
+                { message: 'Question text, options, and correct answer are required.' },
+                { status: 400 }
             );
         }
 
-        return NextResponse.json(
-            {
-                ...question,
-                questionNumber: currentQuestionIndex + 1, // 👈 Add question number
-                totalQuestions,
+        // Ensure points is a number
+        const parsedPoints = parseInt(points, 10) || 10;
+
+        const newQuestion = await prisma.question.create({
+            data: {
+                questionText,
+                options,
+                correctAnswer,
+                points: parsedPoints,
             },
-            { status: 200 }
+        });
+
+        return NextResponse.json(
+            { message: '✅ Question added successfully!', question: newQuestion },
+            { status: 201 }
         );
     } catch (error) {
-        console.error("Error fetching question:", error);
+        console.error("Error adding question:", error);
         return NextResponse.json(
-            { message: "Internal Server Error" },
+            { message: '❌ Failed to add question.' },
             { status: 500 }
         );
     }

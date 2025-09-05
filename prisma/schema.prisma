@@ -1,4 +1,5 @@
-// prisma/schema.prisma
+// ganpati-quiz-app/prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -8,20 +9,27 @@ datasource db {
   url      = env("POSTGRES_PRISMA_URL")
 }
 
-// Model for the quiz questions
 model Question {
   id            String   @id @default(cuid())
   questionText  String
-  options       String[] // An array of strings for the multiple-choice options
+  options       String[]
   correctAnswer String
   points        Int      @default(10)
   createdAt     DateTime @default(now())
 }
 
-// Model for the quiz participants
 model Participant {
   id        String   @id @default(cuid())
   name      String   @unique
   score     Int      @default(0)
   createdAt DateTime @default(now())
+}
+
+model QuizState {
+  id                String   @id @default(cuid())
+  currentQuestionId String?
+  questionStartTime DateTime?
+  answerReceived    Boolean  @default(false)
+  quizEnded         Boolean  @default(false)
+  quizStarted       Boolean  @default(false) // New: Tracks if the quiz has been started by the admin
 }
